@@ -8,7 +8,9 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
 
+# === Setup ===
 app = Flask(__name__)
+STOCK_SYMBOL = "AAPL"
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
@@ -18,29 +20,29 @@ ALPACA_SECRET_KEY = os.environ["ALPACA_SECRET_KEY"]
 bot = Bot(token=TELEGRAM_TOKEN)
 trading_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
 
+# === Telegram Alert ===
+def send_telegram(message):
+    bot.send_message(chat_id=CHAT_ID, text=message)
+
+# === Bot Logic ===
 def run_bot():
-    STOCK_SYMBOL = "AAPL"
-    today = datetime.date.today()
-    start = today - datetime.timedelta(days=100)
+    try:
+        today = datetime.date.today()
+        start = today - datetime.timedelta(days=100)
+        df = yf.download(STOCK_SYMBOL, start=start)
 
-    df = yf.download(STOCK_SYMBOL, start=start)
-    if df.empty or len(df) < 20:
-        return { "error": "Not enough data." }
+        # Calculate RSI and SMA
+        df["rsi"] = pd.Series(pd.to_numeric(yf.download(STOCK_SYMBOL, start=start)["Close"])).rolling(window=14).mean().fillna(0)
+        df["sma5"] = df["Close"].rolling(window=5).mean().fillna(0)
 
-    df["sma5"] = df["Close"].rolling(window=5).mean()
-    delta = df["Close"].diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=14).mean()
-    avg_loss = loss.rolling(window=14).mean()
-    rs = avg_gain / avg_loss
-    df["rsi"] = 100 - (100 / (1 + rs))
+        latest = df.iloc[-1]
+        rsi_value = latest["rsi"]
+        sma5_value = latest["sma5"]
+        close_price = latest["Close"]
 
-    latest = df.iloc[-1]
-    if pd.notna(latest["rsi"]) and pd.notna(latest["sma5"]):
-        if latest["rsi"] < 30 and latest["Close"] > latest["sma5"]:
-            message = f"📈 BUY SIGNAL for {STOCK_SYMBOL}\nRSI: {latest['rsi']:.2f}, Close: ${latest['Close']:.2f}"
-            bot.send_message(chat_id=CHAT_ID, text=message)
+        if rsi_value < 30 and close_price > sma5_value:
+            message = f"📈 BUY SIGNAL for {STOCK_SYMBOL}!\nRSI: {rsi_value:.2f}, Close: {close_price:.2f}, SMA(5): {sma5_value:.2f}"
+            send_telegram(message)
 
             order = MarketOrderRequest(
                 symbol=STOCK_SYMBOL,
@@ -49,14 +51,30 @@ def run_bot():
                 time_in_force=TimeInForce.DAY
             )
             trading_client.submit_order(order)
-            return { "status": "Buy signal triggered and order placed." }
 
-    return { "status": "No signal today." }
+            return {"signal": "buy", "rsi": rsi_value, "close": close_price, "sma5": sma5_value}
+        else:
+            return {"signal": "none"}
+
+    except Exception as e:
+        return {"error": str(e)}
+
+# === Routes ===
+@app.route("/")
+def home():
+    return "✅ Trading bot is live!"
 
 @app.route("/run-bot")
 def trigger_bot():
     result = run_bot()
-    return result
+    if "error" in result:
+        return f"⚠️ Error: {result['error']}", 500
+    elif result["signal"] == "buy":
+        return "✅ Buy signal triggered and sent to Telegram."
+    else:
+        return "No signal today."
 
+# === Flask Entry Point ===
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
