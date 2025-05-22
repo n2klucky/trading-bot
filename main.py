@@ -12,12 +12,13 @@ from ta.momentum import RSIIndicator
 app = Flask(__name__)
 STOCK_SYMBOL = "AAPL"
 
-# Load from environment variables
+# Load credentials from environment variables
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 ALPACA_API_KEY = os.environ["ALPACA_API_KEY"]
 ALPACA_SECRET_KEY = os.environ["ALPACA_SECRET_KEY"]
 
+# Initialize API clients
 bot = Bot(token=TELEGRAM_TOKEN)
 trading_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
 
@@ -31,23 +32,31 @@ def run_bot():
         df = yf.download(STOCK_SYMBOL, start=start)
 
         if df.empty or len(df) < 20:
-            return {"error": "Not enough data"}
+            return {"error": "Not enough data to evaluate"}
 
-        # Calculate indicators
-        rsi = RSIIndicator(close=df["Close"]).rsi().squeeze()
-        sma5 = df["Close"].rolling(window=5).mean()
+        # Flatten Close prices to avoid shape errors
+        close = df["Close"].values.flatten()
+        close_series = pd.Series(close)
 
-        df["rsi"] = rsi
-        df["sma5"] = sma5
+        # Technical indicators
+        rsi = RSIIndicator(close=close_series).rsi()
+        sma5 = close_series.rolling(window=5).mean()
 
-        latest = df.iloc[-1]
+        # Create DataFrame manually to keep everything aligned
+        df_indicators = pd.DataFrame({
+            "Close": close,
+            "rsi": rsi,
+            "sma5": sma5
+        })
+
+        latest = df_indicators.iloc[-1]
 
         rsi_value = latest["rsi"]
         sma_value = latest["sma5"]
         close_price = latest["Close"]
 
         if pd.isna(rsi_value) or pd.isna(sma_value):
-            return {"error": "Indicators not ready"}
+            return {"error": "Indicators not ready yet"}
 
         if float(rsi_value) < 30 and float(close_price) > float(sma_value):
             message = (
