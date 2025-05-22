@@ -7,18 +7,18 @@ from telegram import Bot
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
-import ta
+from ta.momentum import RSIIndicator
 
 app = Flask(__name__)
 STOCK_SYMBOL = "AAPL"
 
-# Load secrets from environment variables
+# Load environment variables
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 ALPACA_API_KEY = os.environ["ALPACA_API_KEY"]
 ALPACA_SECRET_KEY = os.environ["ALPACA_SECRET_KEY"]
 
-# Setup API clients
+# Clients
 bot = Bot(token=TELEGRAM_TOKEN)
 trading_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
 
@@ -34,28 +34,29 @@ def run_bot():
         if df.empty or len(df) < 20:
             return {"error": "Not enough data"}
 
-        # Calculate RSI and SMA
-        df["rsi"] = ta.momentum.RSIIndicator(close=df["Close"]).rsi()
-        df["sma5"] = df["Close"].rolling(window=5).mean()
+        # Indicators
+        rsi = RSIIndicator(close=df["Close"]).rsi()
+        sma5 = df["Close"].rolling(window=5).mean()
+
+        df["rsi"] = rsi
+        df["sma5"] = sma5
 
         latest = df.iloc[-1]
 
-        # Convert to float scalars
-        rsi_value = float(latest["rsi"]) if pd.notnull(latest["rsi"]) else None
-        sma_value = float(latest["sma5"]) if pd.notnull(latest["sma5"]) else None
-        close_price = float(latest["Close"]) if pd.notnull(latest["Close"]) else None
+        rsi_value = latest["rsi"]
+        sma_value = latest["sma5"]
+        close_price = latest["Close"]
 
-        if rsi_value is None or sma_value is None or close_price is None:
-            return {"error": "Missing values in indicators"}
+        if pd.isna(rsi_value) or pd.isna(sma_value):
+            return {"error": "Indicators not ready"}
 
-        if rsi_value < 30 and close_price > sma_value:
+        if float(rsi_value) < 30 and float(close_price) > float(sma_value):
             message = (
-                f"📈 BUY SIGNAL for {STOCK_SYMBOL}\n"
-                f"RSI: {rsi_value:.2f}, Close: ${close_price:.2f}, SMA(5): ${sma_value:.2f}"
+                f"📈 BUY SIGNAL for {STOCK_SYMBOL}!\n"
+                f"RSI: {rsi_value:.2f}, Close: {close_price:.2f}, SMA(5): {sma_value:.2f}"
             )
             send_telegram(message)
 
-            # Submit mock trade to Alpaca
             order = MarketOrderRequest(
                 symbol=STOCK_SYMBOL,
                 qty=1,
@@ -66,3 +67,24 @@ def run_bot():
 
             return {"signal": "buy"}
         else:
+            return {"signal": "none"}
+
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.route("/")
+def home():
+    return "✅ Trading bot is live!"
+
+@app.route("/run-bot")
+def trigger_bot():
+    result = run_bot()
+    if "error" in result:
+        return f"⚠️ Error: {result['error']}", 500
+    elif result["signal"] == "buy":
+        return "✅ Buy signal sent!"
+    else:
+        return "No signal today."
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
