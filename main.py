@@ -7,6 +7,7 @@ from telegram import Bot
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import OrderSide, TimeInForce
+import ta
 
 # === Setup ===
 app = Flask(__name__)
@@ -31,14 +32,17 @@ def run_bot():
         start = today - datetime.timedelta(days=100)
         df = yf.download(STOCK_SYMBOL, start=start)
 
+        if df.empty or len(df) < 20:
+            return {"error": "Not enough data to evaluate."}
+
         # Calculate RSI and SMA
-        df["rsi"] = pd.Series(pd.to_numeric(yf.download(STOCK_SYMBOL, start=start)["Close"])).rolling(window=14).mean().fillna(0)
-        df["sma5"] = df["Close"].rolling(window=5).mean().fillna(0)
+        df["rsi"] = ta.momentum.RSIIndicator(close=df["Close"]).rsi()
+        df["sma5"] = df["Close"].rolling(window=5).mean()
 
         latest = df.iloc[-1]
-        rsi_value = latest["rsi"]
-        sma5_value = latest["sma5"]
-        close_price = latest["Close"]
+        rsi_value = float(latest["rsi"])
+        sma5_value = float(latest["sma5"])
+        close_price = float(latest["Close"])
 
         if rsi_value < 30 and close_price > sma5_value:
             message = f"📈 BUY SIGNAL for {STOCK_SYMBOL}!\nRSI: {rsi_value:.2f}, Close: {close_price:.2f}, SMA(5): {sma5_value:.2f}"
@@ -74,7 +78,5 @@ def trigger_bot():
     else:
         return "No signal today."
 
-# === Flask Entry Point ===
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
-
