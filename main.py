@@ -12,13 +12,12 @@ from ta.momentum import RSIIndicator
 app = Flask(__name__)
 STOCK_SYMBOL = "AAPL"
 
-# Load environment variables
+# Load from environment variables
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 ALPACA_API_KEY = os.environ["ALPACA_API_KEY"]
 ALPACA_SECRET_KEY = os.environ["ALPACA_SECRET_KEY"]
 
-# Clients
 bot = Bot(token=TELEGRAM_TOKEN)
 trading_client = TradingClient(ALPACA_API_KEY, ALPACA_SECRET_KEY, paper=True)
 
@@ -34,8 +33,8 @@ def run_bot():
         if df.empty or len(df) < 20:
             return {"error": "Not enough data"}
 
-        # Indicators
-        rsi = RSIIndicator(close=df["Close"]).rsi()
+        # Calculate indicators
+        rsi = RSIIndicator(close=df["Close"]).rsi().squeeze()
         sma5 = df["Close"].rolling(window=5).mean()
 
         df["rsi"] = rsi
